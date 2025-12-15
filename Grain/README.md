@@ -1,4 +1,4 @@
-# Hybrid Rocket Grain Burning Area Simulator (Image + Arbitrary Port Layout)(Developing)
+# Hybrid Rocket Grain Burning Area Simulator (Image + Arbitrary Port Layout)(Still working)
 
 이미지에서 **포트 중심 배치(원 중심)** 를 자동 검출하고, 사용자가 입력한 실제 치수(그레인 직경/길이, 포트 반지름, 산화제 질유량 등)를 기반으로
 하이브리드 로켓(파라핀 연료 가정)의 **시간에 따른 연소면적(Burning Surface Area)** 과 **포트 단면적(Flow Area)** 변화를 시뮬레이션하는 코드입니다.
