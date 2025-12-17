@@ -110,7 +110,7 @@ def perimeter_from_mask_marching(gas, dx):
 def simulate_hybrid_paraffin_general(
     centers, radii, grain_radius, grain_length,
     m_dot_ox, burn_time, dt=0.02,
-    a=3.0e-5, n=0.8,
+    a=0.488, n=0.62,
     grid_size=1000,
 ):
     centers = np.asarray(centers, float)
