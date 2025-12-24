@@ -155,7 +155,7 @@ def simulate(
     t_end=10.0, dt=0.05,    # 시간 설정
     a=1.1706e-4, n=0.62,    # 단위 일치시키기 위해 a 값 변환하여 사용(0.488 -> 1.1706e-4)
     grid=1000,              # 그리드 크기
-    n_snap=5                # 변화 스냅샷 개수
+    snapshot_dt=0.5,        # 스냅샷 간격 [s]
 ):
     # 격자(단위 = coord)
     xs = np.linspace(xlim[0], xlim[1], grid)
@@ -183,8 +183,13 @@ def simulate(
     def F_effective(F_):
         return np.where(grain_mask, F_, 1e9)
 
-    # 스냅샷 시간들(균일 샘플)
-    snap_times = np.linspace(0.0, t_end, n_snap)
+    # 스냅샷 snapshot_dt 간격으로 저장
+    if snapshot_dt is None and snapshot_dt <= 0:
+        snap_times = np.array([0.0, t_end], dtype=float)
+    else:
+        snap_times = np.arange(0.0, t_end + 1e-12, snapshot_dt, dtype=float)
+        if snap_times[-1] < t_end - 1e-12:
+            snap_times = np.append(snap_times, t_end)
     snap_idx = 0
     tol = 0.5 * dt
 
@@ -216,9 +221,9 @@ def simulate(
         rdot_list.append(rdot)
 
         # 스냅샷 저장
-        if snap_idx < len(snap_times) and abs(t - snap_times[snap_idx]) <= tol:
+        while snap_idx < len(snap_times) and (t + tol) >= snap_times[snap_idx]:
             port_mask = (F_eff <= 0)
-            snapshots.append((t, port_mask))
+            snapshots.append((snap_times[snap_idx], port_mask))
             snap_idx += 1
 
         #SDF 가정 하에서 F를 rdot*dt만큼 팽창
@@ -278,7 +283,7 @@ if __name__ == "__main__":
         t_end=t_end, dt=0.05,
         a=1.1706e-4, n=0.62,
         grid=1000,
-        n_snap=5
+        snapshot_dt=0.5
     )
 
     # 그래프
@@ -320,7 +325,7 @@ if __name__ == "__main__":
             port_mask.astype(float), 
             levels=[0.5],
             colors=[color], 
-            linewidths=2
+            linewidths=1
         )
         line = mlines.Line2D([], [], color=color, linewidth=2, label=f"t={ti:.2f}s")
         handles.append(line)
