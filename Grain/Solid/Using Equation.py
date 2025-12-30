@@ -146,7 +146,7 @@ def area_from_F(F_eff, x0, y0, dx_unit, dy_unit, scale):
         A += A_poly
     return A
 
-def P_chamber_calculation(A_port, A_nozzle_t, C_star, den_grain, A_burn, a=1.56345, n=0.35):
+def P_chamber_calculation(A_port, A_nozzle_t, C_star, den_grain, A_burn, a=0.0278, n=0.35):
     """
     연소실 압력 계산
     ================================
@@ -167,7 +167,7 @@ def simulate(
     den_grain,              # 그레인 밀도 [kg/m³]
     C_star,                 # C* [m/s]
     t_end=10.0, dt=0.05,    # 시간 설정
-    a=1.56345, n=0.35,      # 단위 일치시키기 위해 a 값 변환하여 사용(3.5 -> 1.56345)
+    a=0.0278, n=0.35,      # 단위 일치시키기 위해 a 값 변환하여 사용(3.5 -> 0.0278)
     grid=1000,              # 그리드 크기
     snapshot_dt=0.5,        # 스냅샷 간격 [s]
 ):
@@ -226,7 +226,6 @@ def simulate(
 
         # 후퇴율(m/s)
         P_chamber = P_chamber_calculation(A_port, A_nozzle_t, C_star, den_grain, A_burn, a, n)
-        m_dot_ox = P_chamber * A_nozzle_t / C_star
         rdot = a * (P ** n)
 
         # 저장 (길이 항상 동일)
