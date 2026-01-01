@@ -146,7 +146,7 @@ def area_from_F(F_eff, x0, y0, dx_unit, dy_unit, scale):
         A += A_poly
     return A
 
-def P_chamber_calculation(A_port, A_nozzle_t, C_star, den_grain, A_burn, a=0.0278, n=0.35):
+def P_chamber_calculation(A_nozzle_t, C_star, den_grain, A_burn, a_SI, n):
     """
     연소실 압력 계산
     ================================
@@ -155,9 +155,9 @@ def P_chamber_calculation(A_port, A_nozzle_t, C_star, den_grain, A_burn, a=0.027
     C_star      : C* [m/s]
     den_grain   : 그레인 밀도 [kg/m³]
     A_burn      : 연소면적 [m²]
-    a, n        : 후퇴율 상수
+    a_SI, n     : 후퇴율 상수 (SI 단위)
     """
-    P_chamber = (C_star * den_grain * a * A_burn / A_nozzle_t)**(1/(1-n))
+    P_chamber = (C_star * den_grain * a_SI * A_burn / A_nozzle_t)**(1/(1-n))
     return P_chamber
 # 시뮬레이터
 def simulate(
@@ -166,10 +166,11 @@ def simulate(
     D_grain, L_grain,       # 그레인 직경, 길이 [m]
     den_grain,              # 그레인 밀도 [kg/m³]
     C_star,                 # C* [m/s]
-    t_end=10.0, dt=0.05,    # 시간 설정
-    a=0.0278, n=0.35,      # 단위 일치시키기 위해 a 값 변환하여 사용(3.5 -> 0.0278)
-    grid=1000,              # 그리드 크기
-    snapshot_dt=0.5,        # 스냅샷 간격 [s]
+    A_nozzle_t,             # 노즐목 면적 [m²]
+    t_end, dt,    # 시간 설정
+    a, n,      # 후퇴율 상수, 단위 rdot[m/s], Pc[Pa]
+    grid,              # 그리드 크기
+    snapshot_dt        # 스냅샷 간격 [s]
 ):
     # 격자(단위 = coord)
     xs = np.linspace(xlim[0], xlim[1], grid)
@@ -225,8 +226,8 @@ def simulate(
         A_burn = P * L_grain
 
         # 후퇴율(m/s)
-        P_chamber = P_chamber_calculation(A_port, A_nozzle_t, C_star, den_grain, A_burn, a, n)
-        rdot = a * (P ** n)
+        P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, A_burn, a, n)
+        rdot = a * (P_chamber ** n)
 
         # 저장 (길이 항상 동일)
         t_list.append(t)
@@ -298,10 +299,11 @@ if __name__ == "__main__":
         D, L,
         den_grain,
         C_star,
+        A_nozzle_t,
         t_end=10.0, dt=0.05,
-        a=1.1706e-4, n=0.62,
+        a=2.78e-5, n=0.35,
         grid=1000,
-        snapshot_dt=0.5
+        snapshot_dt=0.1
     )
 
     # 그래프
