@@ -159,6 +159,11 @@ def P_chamber_calculation(A_nozzle_t, C_star, den_grain, A_burn, a_SI, n):
     """
     P_chamber = (C_star * den_grain * a_SI * A_burn / A_nozzle_t)**(1/(1-n))
     return P_chamber
+
+def a_SI_calculation(a_raw, n_raw):
+    a_SI = a_raw*1e-3*(1e-1**(6*n_raw))
+    return a_SI
+
 # 시뮬레이터
 def simulate(
     exprs,                  # 포트 방정식(들)
@@ -209,7 +214,7 @@ def simulate(
     tol = 0.5 * dt
 
     # 결과 저장용 리스트 생성
-    t_list, A_port_list, A_burn_list, rdot_list = [], [], [], []
+    t_list, A_port_list, A_burn_list, rdot_list, P_chamber_list = [], [], [], [], []
     snapshots = []
 
     t = 0.0
@@ -234,6 +239,7 @@ def simulate(
         A_port_list.append(A_port)
         A_burn_list.append(A_burn)
         rdot_list.append(rdot)
+        P_chamber_list.append(P_chamber)
 
         # 스냅샷 저장
         while snap_idx < len(snap_times) and (t + tol) >= snap_times[snap_idx]:
@@ -266,6 +272,7 @@ def simulate(
         np.array(A_port_list),
         np.array(A_burn_list),
         np.array(rdot_list),
+        np.array(P_chamber_list),
         snapshots,
         X_m, Y_m,
         grain_sdf_m
@@ -290,10 +297,12 @@ if __name__ == "__main__":
     den_grain = float(input("그레인 밀도 [kg/m³]: "))
     C_star = float(input("C* [m/s]: "))
     A_nozzle_t = float(input("노즐목 면적 A_nozzle [m²]: "))
-    
+    a_raw = float(input("후퇴율 상수 a (mm/s in MPa): "))
+    n_raw = float(input("후퇴율 지수 n: "))
 
+    a_SI = a_SI_calculation(a_raw, n_raw)
 
-    t, Aport, Aburn, rdot, shots, X_m, Y_m, grain_sdf_m = simulate(
+    t, Aport, Aburn, rdot, Pchamber, shots, X_m, Y_m, grain_sdf_m = simulate(
         exprs,
         (x0, x1), (y0, y1),
         D, L,
@@ -301,7 +310,7 @@ if __name__ == "__main__":
         C_star,
         A_nozzle_t,
         t_end=10.0, dt=0.05,
-        a=2.78e-5, n=0.35,
+        a=a_SI, n=n_raw,
         grid=1000,
         snapshot_dt=0.1
     )
@@ -323,6 +332,12 @@ if __name__ == "__main__":
     plt.plot(t, rdot)
     plt.xlabel("Time [s]")
     plt.ylabel("Regression Rate rdot [m/s]")
+    plt.grid(True)
+
+    plt.figure()
+    plt.plot(t, Pchamber * 1e-5)
+    plt.xlabel("Time [s]")
+    plt.ylabel("Chamber Pressure [bar]")
     plt.grid(True)
 
     # 단면 변화(연료/포트/외벽 같이 표시)
