@@ -146,19 +146,18 @@ def area_from_F(F_eff, x0, y0, dx_unit, dy_unit, scale):
         A += A_poly
     return A
 
-def P_chamber_calculation(A_nozzle_t, C_star, den_grain, A_burn, a_SI, n):
+def P_chamber_calculation(A_nozzle_t, C_star, den_grain, r_dot, A_burn):
     """
     연소실 압력 계산
     ================================
-    A_port      : 포트 단면적 [m²]
-    A_nozzle_t  : 노즐목 면적 [m²]
+    A_nozzle_t  : 노즐목 면적 [mm²]
     C_star      : C* [m/s]
-    den_grain   : 그레인 밀도 [kg/m³]
-    A_burn      : 연소면적 [m²]
-    a_SI, n     : 후퇴율 상수 (SI 단위)
+    den_grain   : 그레인 밀도 [g/cc]
+    r_dot       : 후퇴율 [mm/s]
+    A_burn      : 연소면적 [mm²]
     """
-    P_chamber = (C_star * den_grain * a_SI * A_burn / A_nozzle_t)**(1/(1-n))
-    return P_chamber
+    P_chamber = C_star * den_grain * r_dot * A_burn / A_nozzle_t
+    return P_chamber * 10e-6  # Pa -> MPa
 
 def a_SI_calculation(a_raw, n_raw):
     a_SI = a_raw*1e-3*(1e-1**(6*n_raw))
@@ -168,14 +167,15 @@ def a_SI_calculation(a_raw, n_raw):
 def simulate(
     exprs,                  # 포트 방정식(들)
     xlim, ylim,             # 좌표계 단위 범위
-    D_grain, L_grain,       # 그레인 직경, 길이 [m]
-    den_grain,              # 그레인 밀도 [kg/m³]
+    D_grain, L_grain,       # 그레인 직경, 길이 [mm]
+    den_grain,              # 그레인 밀도 [g/cc]
     C_star,                 # C* [m/s]
-    A_nozzle_t,             # 노즐목 면적 [m²]
-    t_end, dt,    # 시간 설정
-    a, n,      # 후퇴율 상수, 단위 rdot[m/s], Pc[Pa]
-    grid,              # 그리드 크기
-    snapshot_dt        # 스냅샷 간격 [s]
+    P_chamber,              # 목표 연소실 압력 [MPa]
+    A_nozzle_t,             # 노즐목 면적 [mm²]
+    t_end, dt,              # 시간 설정[s]
+    a, n,                   # 후퇴율 상수, 단위 rdot[mm/s], Pc[MPa]
+    grid,                   # 그리드 크기
+    snapshot_dt             # 스냅샷 간격[s]
 ):
     # 격자(단위 = coord)
     xs = np.linspace(xlim[0], xlim[1], grid)
@@ -186,7 +186,7 @@ def simulate(
     dy_unit = ys[1] - ys[0]
 
     # x 범위(지름)가 곧 실제 그레인 직경이므로 스케일 계산
-    # scale = (m / coord-unit)
+    # scale = (mm / coord-unit)
     scale = D_grain / (xlim[1] - xlim[0])
 
      # 그레인 외벽: (0,0) 중심, coord 단위 반지름
@@ -204,7 +204,7 @@ def simulate(
         return np.where(grain_mask, F_, 1e9)
 
     # 스냅샷 snapshot_dt 간격으로 저장
-    if snapshot_dt is None and snapshot_dt <= 0:
+    if snapshot_dt is None or snapshot_dt <= 0:
         snap_times = np.array([0.0, t_end], dtype=float)
     else:
         snap_times = np.arange(0.0, t_end + 1e-12, snapshot_dt, dtype=float)
@@ -217,22 +217,24 @@ def simulate(
     t_list, A_port_list, A_burn_list, rdot_list, P_chamber_list = [], [], [], [], []
     snapshots = []
 
+    A_grain = np.pi * (D_grain/2)**2
+
     t = 0.0
     while t <= t_end + 1e-12:
         F_eff = F_effective(F)
 
-        # 포트 단면적(서브픽셀, m^2)
+        # 포트 단면적(서브픽셀, mm^2)
         A_port = area_from_F(F_eff, xlim[0], ylim[0], dx_unit, dy_unit, scale)
         if A_port <= 0:
             break
         
-        # 연소면적(옆면) = 포트 경계 둘레 * 길이 (m^2)
+        # 연소면적(옆면) = 포트 경계 둘레 * 길이 + 앞뒤 단면적 (mm^2)
         P = perimeter_from_F(F_eff, xlim[0], ylim[0], dx_unit, dy_unit, scale)
-        A_burn = P * L_grain
+        A_burn = P * L_grain + (A_grain - A_port) * 2.0
 
-        # 후퇴율(m/s)
-        P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, A_burn, a, n)
+        # 후퇴율(mm/s)
         rdot = a * (P_chamber ** n)
+        P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, rdot, A_burn)
 
         # 저장 (길이 항상 동일)
         t_list.append(t)
@@ -292,15 +294,15 @@ if __name__ == "__main__":
     x0, x1 = map(float, input("x 범위 (예: -15 15): ").split())
     y0, y1 = map(float, input("y 범위 (예: -15 15): ").split())
 
-    D = float(input("그레인 직경 D_grain [m]: "))
-    L = float(input("그레인 길이(높이) L_grain [m]: "))
-    den_grain = float(input("그레인 밀도 [kg/m³]: "))
+    D = float(input("그레인 직경 D_grain [mm]: "))
+    L = float(input("그레인 길이(높이) L_grain [mm]: "))
+    den_grain = float(input("그레인 밀도 [g/cc]: "))
     C_star = float(input("C* [m/s]: "))
-    A_nozzle_t = float(input("노즐목 면적 A_nozzle [m²]: "))
+    P_chamber = float(input("목표 압력 Pc [MPa]: "))
+    A_nozzle_t = float(input("노즐목 면적 A_nozzle [mm²]: "))
     a_raw = float(input("후퇴율 상수 a (mm/s in MPa): "))
     n_raw = float(input("후퇴율 지수 n: "))
 
-    a_SI = a_SI_calculation(a_raw, n_raw)
 
     t, Aport, Aburn, rdot, Pchamber, shots, X_m, Y_m, grain_sdf_m = simulate(
         exprs,
@@ -308,36 +310,37 @@ if __name__ == "__main__":
         D, L,
         den_grain,
         C_star,
+        P_chamber,
         A_nozzle_t,
-        t_end=10.0, dt=0.05,
-        a=a_SI, n=n_raw,
+        t_end=4.0, dt=0.001,
+        a=a_raw, n=n_raw,
         grid=1000,
-        snapshot_dt=0.1
+        snapshot_dt=0.001
     )
 
     # 그래프
     plt.figure()
     plt.plot(t, Aburn)
     plt.xlabel("Time [s]")
-    plt.ylabel("Burning Area [m²] (Perimeter × Length)")
+    plt.ylabel("Burning Area [mm²]")
     plt.grid(True)
 
     plt.figure()
     plt.plot(t, Aport)
     plt.xlabel("Time [s]")
-    plt.ylabel("Port Area [m²] (Union)")
+    plt.ylabel("Port Area [mm²]")
     plt.grid(True)
 
     plt.figure()
     plt.plot(t, rdot)
     plt.xlabel("Time [s]")
-    plt.ylabel("Regression Rate rdot [m/s]")
+    plt.ylabel("Regression Rate rdot [mm/s]")
     plt.grid(True)
 
     plt.figure()
-    plt.plot(t, Pchamber * 1e-5)
+    plt.plot(t, Pchamber)
     plt.xlabel("Time [s]")
-    plt.ylabel("Chamber Pressure [bar]")
+    plt.ylabel("Chamber Pressure [MPa]")
     plt.grid(True)
 
     # 단면 변화(연료/포트/외벽 같이 표시)
@@ -366,9 +369,9 @@ if __name__ == "__main__":
         handles.append(line)
 
     plt.gca().set_aspect("equal", adjustable="box")
-    plt.title("Port Evolution Over Time (Overlay)")
-    plt.xlabel("x [m]")
-    plt.ylabel("y [m]")
+    plt.title("Port Evolution Over Time")
+    plt.xlabel("x [mm]")
+    plt.ylabel("y [mm]")
     plt.grid(True, alpha=0.3)
     plt.legend(handles=handles, loc="best")
     plt.show()
