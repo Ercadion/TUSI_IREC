@@ -157,11 +157,7 @@ def P_chamber_calculation(A_nozzle_t, C_star, den_grain, r_dot, A_burn):
     A_burn      : 연소면적 [mm²]
     """
     P_chamber = C_star * den_grain * r_dot * A_burn / A_nozzle_t
-    return P_chamber * 10e-6  # Pa -> MPa
-
-def a_SI_calculation(a_raw, n_raw):
-    a_SI = a_raw*1e-3*(1e-1**(6*n_raw))
-    return a_SI
+    return P_chamber * 1e-6  # Pa -> MPa
 
 # 시뮬레이터
 def simulate(
@@ -235,6 +231,10 @@ def simulate(
         # 후퇴율(mm/s)
         rdot = a * (P_chamber ** n)
         P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, rdot, A_burn)
+
+        if t < 0.01:
+            print(t, " { Pc:", P_chamber, ", rdot:", rdot, ", dcoord:", (rdot*dt)/scale, ", A_burn: ", A_burn)
+            print("     C*:", C_star, ", den_grain:", den_grain, ", A_nozzle_t:", A_nozzle_t, "}")
 
         # 저장 (길이 항상 동일)
         t_list.append(t)
@@ -315,7 +315,7 @@ if __name__ == "__main__":
         t_end=4.0, dt=0.001,
         a=a_raw, n=n_raw,
         grid=1000,
-        snapshot_dt=0.001
+        snapshot_dt=0.05
     )
 
     # 그래프
