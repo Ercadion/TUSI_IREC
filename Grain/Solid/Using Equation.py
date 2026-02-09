@@ -159,6 +159,37 @@ def P_chamber_calculation(A_nozzle_t, C_star, den_grain, r_dot, A_burn):
     P_chamber = C_star * den_grain * r_dot * A_burn / A_nozzle_t
     return P_chamber * 1e-6  # Pa -> MPa
 
+def M_dot_Calculation(den_grain, r_dot, A_burn):
+    """
+    질량 유량 적분 계산
+    ================================
+    den_grain   : 그레인 밀도 [g/cc]
+    r_dot       : 후퇴율 [mm/s]
+    A_burn      : 연소면적 [mm²]
+    dt          : 시간 간격 [s]
+    """
+    M_dot = den_grain * r_dot * A_burn * 1e-6   # g/s -> kg/s                        # kg
+    return M_dot
+def D_port_calculation(A_port):
+    return (4.0 * A_port / np.pi) ** 0.5    
+
+def Grain_weight(den_grain, D_grain, D_port, L_grain):
+    """
+    그레인 무게 계산
+    ================================
+    den_grain   : 그레인 밀도 [g/cc]
+    D_grain     : 그레인 직경 [mm]
+    D_port      : 포트 직경 [mm]
+    L_grain     : 그레인 길이 [mm]
+    """
+    R_grain = D_grain / 2.0  # mm
+    R_port = D_port / 2.0    # mm
+    V_grain = np.pi * (R_grain**2) * L_grain    # mm^3
+    V_port = np.pi * (R_port**2) * L_grain      # mm^3
+    V_solid = V_grain - V_port                  # mm^3
+    weight = V_solid * den_grain                # g
+    return weight * 1e-3
+
 # 시뮬레이터
 def simulate(
     exprs,                  # 포트 방정식(들)
@@ -210,12 +241,13 @@ def simulate(
     tol = 0.5 * dt
 
     # 결과 저장용 리스트 생성
-    t_list, A_port_list, A_burn_list, rdot_list, P_chamber_list = [], [], [], [], []
+    t_list, A_port_list, A_burn_list, r_dot_list, P_chamber_list, M_dot_list = [], [], [], [], [], []
     snapshots = []
 
     A_grain = np.pi * (D_grain/2)**2
 
     t = 0.0
+    m_burn = 0.0
     while t <= t_end + 1e-12:
         F_eff = F_effective(F)
 
@@ -223,25 +255,38 @@ def simulate(
         A_port = area_from_F(F_eff, xlim[0], ylim[0], dx_unit, dy_unit, scale)
         if A_port <= 0:
             break
+        if t < 1e-12:
+            D_port = D_port_calculation(A_port)
+            grain_weight = Grain_weight(den_grain, D_grain, D_port, L_grain)
+            print("초기 포트 직경 D_port =", D_port, "mm")
+            print("그레인 무게 =", grain_weight, "g")
         
         # 연소면적(옆면) = 포트 경계 둘레 * 길이 + 앞뒤 단면적 (mm^2)
         P = perimeter_from_F(F_eff, xlim[0], ylim[0], dx_unit, dy_unit, scale)
         A_burn = P * L_grain + (A_grain - A_port) * 2.0
 
         # 후퇴율(mm/s)
-        rdot = a * (P_chamber ** n)
-        P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, rdot, A_burn)
+        r_dot = a * (P_chamber ** n)
+        P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, r_dot, A_burn)
+
+        # 질유량(kg/s)
+        M_dot = M_dot_Calculation(den_grain, r_dot, A_burn)
+        m_burn += M_dot * dt * 1e3  # g
 
         if t < 0.01:
-            print(t, " { Pc:", P_chamber, ", rdot:", rdot, ", dcoord:", (rdot*dt)/scale, ", A_burn: ", A_burn)
+            print("r_dot:", r_dot, "A_burn:", A_burn, "M_dot:", M_dot, "m_burn:", m_burn)
+        """
+        if t < 0.01:
+            print(t, " { Pc:", P_chamber, ", rdot:", r_dot, ", dcoord:", (r_dot*dt)/scale, ", A_burn: ", A_burn)
             print("     C*:", C_star, ", den_grain:", den_grain, ", A_nozzle_t:", A_nozzle_t, "}")
-
+        """
         # 저장 (길이 항상 동일)
         t_list.append(t)
         A_port_list.append(A_port)
         A_burn_list.append(A_burn)
-        rdot_list.append(rdot)
+        r_dot_list.append(r_dot)
         P_chamber_list.append(P_chamber)
+        M_dot_list.append(M_dot)
 
         # 스냅샷 저장
         while snap_idx < len(snap_times) and (t + tol) >= snap_times[snap_idx]:
@@ -251,7 +296,7 @@ def simulate(
 
         #SDF 가정 하에서 F를 rdot*dt만큼 팽창
         # F는 coord 단위, rdot*dt는 m -> coord로 환산
-        F = F - (rdot * dt) / scale
+        F = F - (r_dot * dt) / scale
 
         # 외벽 도달: 포트가 그레인 경계에 닿으면 종료
         # 경계 픽셀 근처에서 True가 생기면 닿았다고 판단
@@ -259,7 +304,13 @@ def simulate(
             np.roll(~grain_mask, 1, 0) | np.roll(~grain_mask, -1, 0) |
             np.roll(~grain_mask, 1, 1) | np.roll(~grain_mask, -1, 1)
         )
-        if np.any((F_eff <= 0) & boundary):
+        if np.any((F_eff <= 0) & boundary) or m_burn > grain_weight:
+            if np.any((F_eff <= 0) & boundary):
+                print("외벽 도달 t =", t)
+                print("그레인 연소량 = ", m_burn, "g")
+            if m_burn > grain_weight:
+                print("그레인 연소 완료 t =", t)
+                print("그레인 연소량 = ", m_burn, "g")
             break
 
         t += dt
@@ -273,8 +324,10 @@ def simulate(
         np.array(t_list),
         np.array(A_port_list),
         np.array(A_burn_list),
-        np.array(rdot_list),
+        np.array(r_dot_list),
         np.array(P_chamber_list),
+        np.array(M_dot_list),
+        m_burn,
         snapshots,
         X_m, Y_m,
         grain_sdf_m
@@ -304,7 +357,7 @@ if __name__ == "__main__":
     n_raw = float(input("후퇴율 지수 n: "))
 
 
-    t, Aport, Aburn, rdot, Pchamber, shots, X_m, Y_m, grain_sdf_m = simulate(
+    t, Aport, Aburn, rdot, Pchamber, Mdot, Mburn, shots, X_m, Y_m, grain_sdf_m = simulate(
         exprs,
         (x0, x1), (y0, y1),
         D, L,
@@ -326,9 +379,9 @@ if __name__ == "__main__":
     plt.grid(True)
 
     plt.figure()
-    plt.plot(t, Aport)
+    plt.plot(t, Mdot)
     plt.xlabel("Time [s]")
-    plt.ylabel("Port Area [mm²]")
+    plt.ylabel("Mass Flow Rate [kg/s]")
     plt.grid(True)
 
     plt.figure()
