@@ -146,18 +146,29 @@ def area_from_F(F_eff, x0, y0, dx_unit, dy_unit, scale):
         A += A_poly
     return A
 
-def P_chamber_calculation(A_nozzle_t, C_star, den_grain, r_dot, A_burn):
+def P_chamber_Calculation(r_dot, A_burn, den_grain, P_chamber, A_nozzle_t, C_star, constant_R, T_chamber, V_chamber, dt):
     """
     연소실 압력 계산
     ================================
-    A_nozzle_t  : 노즐목 면적 [mm²]
-    C_star      : C* [m/s]
-    den_grain   : 그레인 밀도 [g/cc]
     r_dot       : 후퇴율 [mm/s]
     A_burn      : 연소면적 [mm²]
+    den_grain   : 그레인 밀도 [g/cc]
+    P_chamber   : 이전 연소실 압력 [MPa]
+    A_nozzle_t  : 노즐목 면적 [mm²]
+    C_star      : C* [m/s]
+    constant_R  : 기체상수 [J/(kg·K)]
+    T_chamber   : 연소실 온도 [K]
+    V_chamber   : 연소실 유효 체적 [mm³]
+    dt          : 시간 간격 [s]
     """
-    P_chamber = C_star * den_grain * r_dot * A_burn / A_nozzle_t
-    return P_chamber * 1e-6  # Pa -> MPa
+    M_dot_gen = den_grain * r_dot * A_burn * 1e-6   # g/s -> kg/s
+    M_dot_out = (P_chamber * A_nozzle_t) / C_star   # kg/s
+    dPc_dt = (constant_R * T_chamber / V_chamber) * (M_dot_gen - M_dot_out) * 1e3   # MPa/s
+    P_chamber_new = P_chamber + dPc_dt * dt
+
+    alpha = 0.15  # 안정화 계수
+    P_chamber = (1-alpha) * P_chamber + alpha * P_chamber_new
+    return P_chamber
 
 def M_dot_Calculation(den_grain, r_dot, A_burn):
     """
@@ -170,10 +181,11 @@ def M_dot_Calculation(den_grain, r_dot, A_burn):
     """
     M_dot = den_grain * r_dot * A_burn * 1e-6   # g/s -> kg/s                        # kg
     return M_dot
-def D_port_calculation(A_port):
+
+def D_port_Calculation(A_port):
     return (4.0 * A_port / np.pi) ** 0.5    
 
-def Grain_weight(den_grain, D_grain, D_port, L_grain):
+def Grain_weight_Calculation(den_grain, D_grain, D_port, L_grain):
     """
     그레인 무게 계산
     ================================
@@ -190,15 +202,41 @@ def Grain_weight(den_grain, D_grain, D_port, L_grain):
     weight = V_solid * den_grain                # g
     return weight * 1e-3
 
+def C_star_Calculation(constant_R, T_chamber, gamma):
+    """
+    C* 계산
+    ================================
+    constant_R : 기체상수 [J/(kg·K)]
+    T_chamber  : 연소실 온도 [K]
+    gamma      : 비열비
+    """
+    C_star = np.sqrt(constant_R * T_chamber / gamma) * ((gamma + 1) / 2) ** ((gamma + 1) / (2 * (gamma - 1)))
+    return C_star
+
+def V_chamber_Calculation(A_port, L_chamber, V_dead):
+    """
+    연소실 유효 체적 계산
+    ================================
+    A_port     : 포트 단면적 [mm²]
+    L_chamber  : 연소실 길이 [mm]
+    V_dead     : 데드볼륨 [mm³]
+    """
+    V_chamber = A_port * L_chamber + V_dead
+    return V_chamber
+
 # 시뮬레이터
 def simulate(
     exprs,                  # 포트 방정식(들)
     xlim, ylim,             # 좌표계 단위 범위
     D_grain, L_grain,       # 그레인 직경, 길이 [mm]
     den_grain,              # 그레인 밀도 [g/cc]
+    constant_R,             # 기체상수 [J/(kg·K)]
+    T_chamber,              # 연소실 온도 [K]
+    P_chamber,              # 초기 압력(대기압) Pc [MPa]
+    Gamma,                  # 비열비
     C_star,                 # C* [m/s]
-    P_chamber,              # 목표 연소실 압력 [MPa]
     A_nozzle_t,             # 노즐목 면적 [mm²]
+    V_dead,                 # 데드볼륨 [mm³]
     t_end, dt,              # 시간 설정[s]
     a, n,                   # 후퇴율 상수, 단위 rdot[mm/s], Pc[MPa]
     grid,                   # 그리드 크기
@@ -256,10 +294,13 @@ def simulate(
         if A_port <= 0:
             break
         if t < 1e-12:
-            D_port = D_port_calculation(A_port)
-            grain_weight = Grain_weight(den_grain, D_grain, D_port, L_grain)
+            D_port = D_port_Calculation(A_port)
+            grain_weight = Grain_weight_Calculation(den_grain, D_grain, D_port, L_grain)
             print("초기 포트 직경 D_port =", D_port, "mm")
             print("그레인 무게 =", grain_weight, "g")
+
+        # 연소실 유효 체적 (mm^3)
+        V_chamber = V_chamber_Calculation(A_port, L_grain, V_dead)
         
         # 연소면적(옆면) = 포트 경계 둘레 * 길이 + 앞뒤 단면적 (mm^2)
         P = perimeter_from_F(F_eff, xlim[0], ylim[0], dx_unit, dy_unit, scale)
@@ -267,12 +308,13 @@ def simulate(
 
         # 후퇴율(mm/s)
         r_dot = a * (P_chamber ** n)
-        P_chamber = P_chamber_calculation(A_nozzle_t, C_star, den_grain, r_dot, A_burn)
 
         # 질유량(kg/s)
         M_dot = M_dot_Calculation(den_grain, r_dot, A_burn)
         m_burn += M_dot * dt * 1e3  # g
 
+        # 연소실 압력(MPa)
+        P_chamber = P_chamber_Calculation(r_dot, A_burn, den_grain, P_chamber, A_nozzle_t, C_star, constant_R, T_chamber, V_chamber, dt)
         if t < 0.01:
             print("r_dot:", r_dot, "A_burn:", A_burn, "M_dot:", M_dot, "m_burn:", m_burn)
         """
@@ -350,11 +392,16 @@ if __name__ == "__main__":
     D = float(input("그레인 직경 D_grain [mm]: "))
     L = float(input("그레인 길이(높이) L_grain [mm]: "))
     den_grain = float(input("그레인 밀도 [g/cc]: "))
-    C_star = float(input("C* [m/s]: "))
-    P_chamber = float(input("목표 압력 Pc [MPa]: "))
+    constant_R = float(input("기체상수 R [J/(kg·K)]: "))
+    T_chamber = float(input("연소실 온도 T_chamber [K]: "))
+    P_chamber = float(input("초기 압력(대기압) Pc [MPa]: "))
+    Gamma = float(input("비열비 gamma: "))
+    C_star = C_star_Calculation(constant_R, T_chamber, Gamma)
+    print("계산된 C* =", C_star, "m/s")
     A_nozzle_t = float(input("노즐목 면적 A_nozzle [mm²]: "))
-    a_raw = float(input("후퇴율 상수 a (mm/s in MPa): "))
-    n_raw = float(input("후퇴율 지수 n: "))
+    V_dead = float(input("데드볼륨 V_dead [mm³]: "))
+    a = float(input("후퇴율 상수 a (mm/s in MPa): "))
+    n = float(input("후퇴율 지수 n: "))
 
 
     t, Aport, Aburn, rdot, Pchamber, Mdot, Mburn, shots, X_m, Y_m, grain_sdf_m = simulate(
@@ -362,13 +409,17 @@ if __name__ == "__main__":
         (x0, x1), (y0, y1),
         D, L,
         den_grain,
-        C_star,
+        constant_R,
+        T_chamber,
         P_chamber,
+        Gamma,
+        C_star,
         A_nozzle_t,
-        t_end=4.0, dt=0.001,
-        a=a_raw, n=n_raw,
-        grid=1000,
-        snapshot_dt=0.05
+        V_dead,
+        t_end = 4.0, dt = 0.001,
+        a = a, n = n,
+        grid = 1000,
+        snapshot_dt = 0.05
     )
 
     # 그래프
