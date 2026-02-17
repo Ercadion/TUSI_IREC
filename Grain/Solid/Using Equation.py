@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from skimage import measure
+from scipy.ndimage import distance_transform_edt
 
 # SAFE eval
 SAFE = {
@@ -96,6 +97,13 @@ def contours_to_phys_xy(c, x0, y0, dx_unit, dy_unit, scale):
     x_m = x_unit * scale
     y_m = y_unit * scale
     return x_m, y_m
+
+def rebuild_SDF_from_mask(port_mask: np.ndarray, dx_mm: float, dy_mm: float) -> np.ndarray:
+    dist_out = distance_transform_edt(~port_mask, sampling=(dy_mm, dx_mm))
+    dist_in = distance_transform_edt(port_mask, sampling=(dy_mm, dx_mm))
+
+    F_sdf = dist_out - dist_in
+    return F_sdf
 
 def perimeter_from_F(F_eff, x0, y0, dx_unit, dy_unit, scale):
     """
@@ -264,6 +272,17 @@ def simulate(
     for e in exprs:
         F = np.minimum(F, eval_expr(e, X, Y))
 
+    
+    # mm per pixel
+    dx_mm = dx_unit * scale
+    dy_mm = dy_unit * scale
+
+    # 재생성 관련 변수
+    rebuild_interval = 45
+    rebuild_counter = 0
+    dr_accum = 0.0
+    dr_threshold = dx_mm * 3.0
+
     # 그레인 밖에서는 의미 없으니 큰 양수로 고정
     def F_effective(F_):
         return np.where(grain_mask, F_, 1e9)
@@ -315,13 +334,7 @@ def simulate(
 
         # 연소실 압력(MPa)
         P_chamber = P_chamber_Calculation(r_dot, A_burn, den_grain, P_chamber, A_nozzle_t, C_star, constant_R, T_chamber, V_chamber, dt)
-        if t < 0.01:
-            print("r_dot:", r_dot, "A_burn:", A_burn, "M_dot:", M_dot, "m_burn:", m_burn)
-        """
-        if t < 0.01:
-            print(t, " { Pc:", P_chamber, ", rdot:", r_dot, ", dcoord:", (r_dot*dt)/scale, ", A_burn: ", A_burn)
-            print("     C*:", C_star, ", den_grain:", den_grain, ", A_nozzle_t:", A_nozzle_t, "}")
-        """
+
         # 저장 (길이 항상 동일)
         t_list.append(t)
         A_port_list.append(A_port)
@@ -332,13 +345,28 @@ def simulate(
 
         # 스냅샷 저장
         while snap_idx < len(snap_times) and (t + tol) >= snap_times[snap_idx]:
-            port_mask = (F_eff <= 0)
-            snapshots.append((snap_times[snap_idx], port_mask))
+            snapshots.append((snap_times[snap_idx], F_eff.copy()))
             snap_idx += 1
 
         #SDF 가정 하에서 F를 rdot*dt만큼 팽창
         # F는 coord 단위, rdot*dt는 m -> coord로 환산
-        F = F - (r_dot * dt) / scale
+        #F = F - (r_dot * dt) / scale
+
+        post_SDF_mask = (F_eff <= 0)
+        dr_mm = r_dot * dt
+        dr_accum += dr_mm
+        rebuild_counter += 1
+        
+        if(rebuild_counter >= rebuild_interval) or (dr_accum >= dr_threshold):
+            F = rebuild_SDF_from_mask(post_SDF_mask, dx_mm, dy_mm)
+            F = np.where(grain_mask, F, 1e9)
+
+            rebuild_counter = 0
+            dr_accum = 0.0
+
+        F = F - dr_mm
+
+        F = np.where(grain_mask, F, 1e9)
 
         # 외벽 도달: 포트가 그레인 경계에 닿으면 종료
         # 경계 픽셀 근처에서 True가 생기면 닿았다고 판단
@@ -404,7 +432,7 @@ if __name__ == "__main__":
     n = float(input("후퇴율 지수 n: "))
 
 
-    t, Aport, Aburn, rdot, Pchamber, Mdot, Mburn, shots, X_m, Y_m, grain_sdf_m = simulate(
+    t, Aport, Aburn, rdot, Pchamber, Mdot, Mburn, shots, X_mm, Y_mm, grain_sdf_m = simulate(
         exprs,
         (x0, x1), (y0, y1),
         D, L,
@@ -418,7 +446,7 @@ if __name__ == "__main__":
         V_dead,
         t_end = 4.0, dt = 0.001,
         a = a, n = n,
-        grid = 1000,
+        grid = 1500,
         snapshot_dt = 0.05
     )
 
@@ -449,23 +477,25 @@ if __name__ == "__main__":
 
     # 단면 변화(연료/포트/외벽 같이 표시)
     plt.figure(figsize=(7, 7))
-    if len(shots) > 0:
-        t0, port0 = shots[0]
-        solid0 = (grain_sdf_m <= 0) & (~port0)
-        plt.contourf(X_m, Y_m, solid0.astype(float),
-                     levels=[-0.5, 0.5, 1.5], alpha=0.25)
-
-
-    plt.contour(X_m, Y_m, grain_sdf_m, levels=[0], colors="k", linewidths=2)
-
+    
+    plt.contour(X_mm, Y_mm, grain_sdf_m, levels=[0], colors="k", linewidths=2)
+    
     cmap = plt.get_cmap("tab10")
     handles = []
-    for i, (ti, port_mask) in enumerate(shots):
+
+    if len(shots) > 0:
+        t0, F0 = shots[0]
+        port0 = (F0 <= 0)
+        solid0 = (grain_sdf_m <= 0) & (~port0)
+        plt.contourf(X_mm, Y_mm, solid0.astype(float),
+                     levels=[-0.5, 0.5, 1.5], alpha=0.25)
+
+    for i, (ti, Fsnap) in enumerate(shots):
         color = cmap(i % 10)
         plt.contour(
-            X_m, Y_m, 
-            port_mask.astype(float), 
-            levels=[0.5],
+            X_mm, Y_mm, 
+            Fsnap, 
+            levels=[0.0],
             colors=[color], 
             linewidths=1
         )
