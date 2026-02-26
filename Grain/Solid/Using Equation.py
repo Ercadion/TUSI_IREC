@@ -339,8 +339,8 @@ def Den_REMAIN_calculation(V_c, V_g, m_REMAIN):
     t_interval: 시간 간격(s)
     """
     V_free = V_c - V_g
-    den_REMAIN = m_REMAIN / V_free
-    return den_REMAIN
+    Den_REMAIN = m_REMAIN / V_free * 1e9 # kg/mm^3 -> g/cc or kg/m^3
+    return Den_REMAIN
 
 def R_dot_calculation(a, n, P_chamber):
     """
@@ -362,7 +362,7 @@ def P_chamber_calculation(Den_REMAIN, R_specific, T_actual, P_atm):
     T_actual: 연소실 온도(K)
     P_atm: 대기압(MPa)
     """
-    P_chamber = Den_REMAIN * R_specific * T_actual + P_atm
+    P_chamber = Den_REMAIN * R_specific * T_actual * 1e-6 + P_atm  #MPa
     return P_chamber
 
 def Kn_calculation(A_bg, A_NOZ_t):
