@@ -168,12 +168,12 @@ def grain_chamber_setting(D_c, L_c, D_g, D_gc, L_gs, N, Den_ideal, Den_ratio, T_
     """
     V_c = np.pi/4 * D_c**2 * L_c                    # 챔버 부피, mm^3
     L_g = L_gs * N                                  # 그레인 총 길이, mm
-    V_g = np.pi/4 * D_g**2 * L_g                    # 그레인 총 부피, mm^3
+    V_g = np.pi/4 * (D_g**2 - D_gc**2) * L_g                    # 그레인 총 부피, mm^3
     V_load = V_g/V_c                                # 챔버 대비 그레인 부피 비율
     Den_actual = Den_ideal * Den_ratio              # 그레인 밀도, g/cc
     m_grain = V_g * Den_actual * 1e-6               # 그레인 질량, kg
-    A_be = N * 2 * np.pi()/4 * (D_g**2 - D_gc**2)   # 그레인 끝면 연소면적, mm^2
-    A_bc = N * np.pi() * D_gc * L_gs                # 그레인 코어 연소면적, mm^2
+    A_be = N * 2 * np.pi/4 * (D_g**2 - D_gc**2)   # 그레인 끝면 연소면적, mm^2
+    A_bc = N * np.pi * D_gc * L_gs                # 그레인 코어 연소면적, mm^2
     A_bg = A_be + A_bc                              # 그레인 총 연소면적, mm^2
     T_actual = T_ideal * eff_combustion             # 연소실 온도, K
     return V_c, L_g, V_g, V_load, Den_actual, m_grain, A_be, A_bc, A_bg, T_actual
@@ -219,7 +219,7 @@ def m_g_calculation(V_g, Den_actual):
     V_g: 그레인 부피(mm^3)
     Den_actual: 그레인 밀도(g/cc)
     """
-    m_grain = V_g * Den_actual * 1e-6
+    m_grain = V_g * Den_actual * 1e-6        # kg
     return m_grain
 
 def A_be_calculation(N, D_g, D_gc):
@@ -230,7 +230,7 @@ def A_be_calculation(N, D_g, D_gc):
     D_g: 그레인 직경(mm)
     D_gc: 코어 직경(mm)
     """
-    A_be = N * 2 * np.pi()/4 * (D_g**2 - D_gc**2)
+    A_be = N * 2 * np.pi/4 * (D_g**2 - D_gc**2)
     return A_be
 
 def A_bc_calculation(D_gc, L_g):
@@ -240,7 +240,7 @@ def A_bc_calculation(D_gc, L_g):
     D_gc: 코어 직경(mm)
     L_g: 그레인 길이(mm)
     """
-    A_bc = np.pi() * D_gc * L_g
+    A_bc = np.pi * D_gc * L_g
     return A_bc
 
 def A_bg_calculation(A_be, A_bc):
@@ -253,7 +253,7 @@ def A_bg_calculation(A_be, A_bc):
     A_bg = A_be + A_bc
     return A_bg
 
-def Find_max_A_bg(r_dot_test, t_interval, D_gc, L_g, N, D_g):
+def Update_grain(r_dot_test, t_interval, D_gc, L_g, N):
     """
     최대 연소면적 찾기
     ================================
@@ -264,19 +264,9 @@ def Find_max_A_bg(r_dot_test, t_interval, D_gc, L_g, N, D_g):
     N: 세그먼트 개수
     D_g: 그레인 직경(mm)
     """
-    find_max = True
-    A_bg_list = []
-    while find_max:
-        D_gc_new = D_gc_calculation(r_dot_test, t_interval, D_gc)
-        L_g_new = L_g_calculation(r_dot_test, t_interval, L_g, N)
-        A_be_new = A_be_calculation(N, D_g, D_gc_new)
-        A_bc_new = A_bc_calculation(D_gc_new, L_g_new)
-        A_bg_new = A_bg_calculation(A_be_new, A_bc_new)
-        A_bg_list.append(A_bg_new)
-        if len(A_bg_list) > 1 and A_bg_list[-1] < A_bg_list[-2]:
-            find_max = False
-    max_A_bg = max(A_bg_list)
-    return max_A_bg
+    D_gc_new = D_gc_calculation(r_dot_test, t_interval, D_gc)
+    L_g_new = L_g_calculation(r_dot_test, t_interval, L_g, N)
+    return D_gc_new, L_g_new
 
 def m_dot_GEN_calculation(D_g, D_gc, L_g, R_dot, N, Den_actual, t_interval):
     """
@@ -293,6 +283,7 @@ def m_dot_GEN_calculation(D_g, D_gc, L_g, R_dot, N, Den_actual, t_interval):
     L_g_new = L_g_calculation(R_dot, t_interval, L_g, N)
     V_g_new = V_g_calculation(D_g, D_gc_new, L_g_new)
     V_diff = V_g - V_g_new
+    print(f"V_diff: {V_diff:.2f} mm^3")
     m_GEN = m_g_calculation(V_diff, Den_actual)
     m_dot_GEN = m_GEN / t_interval
     return m_dot_GEN, D_gc_new, L_g_new, V_g_new
@@ -339,6 +330,7 @@ def Den_REMAIN_calculation(V_c, V_g, m_REMAIN):
     t_interval: 시간 간격(s)
     """
     V_free = V_c - V_g
+
     Den_REMAIN = m_REMAIN / V_free * 1e9 # kg/mm^3 -> g/cc or kg/m^3
     return Den_REMAIN
 
@@ -350,7 +342,25 @@ def R_dot_calculation(a, n, P_chamber):
     n: 후퇴율 상수 n(MPa)
     P_chamber: 연소실 압력(MPa)
     """
+    if P_chamber >= 0.101 and P_chamber <= 0.807:
+        a = 10.708
+        n = 0.625
+    elif P_chamber > 0.807 and P_chamber <= 1.503:
+        a = 8.763
+        n = -0.314
+    elif P_chamber > 1.503 and P_chamber <= 3.792:
+        a = 7.852
+        n = -0.013
+    elif P_chamber > 3.792 and P_chamber <= 7.033:
+        a = 3.907
+        n = 0.535
+    elif P_chamber > 7.033 and P_chamber <= 10.67:
+        a = 9.653
+        n = 0.064
+    else:
+        print(f"경고: P_chamber={P_chamber:.3f} MPa는 후퇴율 계산 범위를 벗어납니다.")
     R_dot = a * (P_chamber ** n)
+    print(f"a={a:.3f}, n={n:.3f}")
     return R_dot
 
 def P_chamber_calculation(Den_REMAIN, R_specific, T_actual, P_atm):
@@ -388,6 +398,7 @@ def D_gc_transfer(A_port):
 def simulate_NOZ_t(
     D_gc, D_g,
     L_g,
+    N,
     t_interval,
     Kn_max,
     r_dot_test   
@@ -402,8 +413,21 @@ def simulate_NOZ_t(
     Kn_max: 최대 Knudsen 수(무차원)
     r_dot_test: 테스트용 후퇴율(mm/s)
     """
-    max_A_bg = Find_max_A_bg(r_dot_test, t_interval, D_gc, L_g, N, D_g)
-    A_NOZ_t = max_A_bg / Kn_max
+    D_gc_new, L_g_new = Update_grain(r_dot_test, t_interval, D_gc, L_g, N)
+    A_bg_list = []
+    find_max = True
+    while find_max:
+        A_be_new = A_be_calculation(N, D_g, D_gc_new)
+        A_bc_new = A_bc_calculation(D_gc_new, L_g_new)
+        A_bg_new = A_bg_calculation(A_be_new, A_bc_new)
+        A_bg_list.append(A_bg_new)
+        if len(A_bg_list) > 1 and A_bg_list[-1] < A_bg_list[-2]:
+            A_bg_max = A_bg_list[-2]
+            break   
+        D_gc_new, L_g_new = Update_grain(r_dot_test, t_interval, D_gc_new, L_g_new, N)
+    A_NOZ_t = A_bg_max / Kn_max
+    print(f"최대 연소면적 A_bg_max: {A_bg_max:.2f} mm^2")
+
     return A_NOZ_t
     
     
@@ -416,6 +440,7 @@ def simulate(
     L_g,                    # 그레인 길이 [mm]
     V_g,                    # 그레인 부피 [mm^3]
     den_actual,             # 그레인 밀도 [g/cc]
+    m_g,                    # 그레인 질량 [kg]
     A_NOZ_t,                # 노즐 단면적 [mm^2]
     R_specific,             # 기체상수 [J/(kg*K)]
     gamma,                  # 비열비
@@ -487,8 +512,6 @@ def simulate(
     t = 0.0
     P_c = P_atm
     R_dot = R_dot_calculation(a, n, P_c)
-    m_g = m_g_calculation(V_g, den_actual)
-    m_g_list.append(m_g)
     m_REMAIN = 0.0
 
     while t <= t_end + 1e-12:
@@ -504,7 +527,8 @@ def simulate(
             print("오차율:", abs(D_port - D_gc) / D_gc * 100, "%")
 
         m_dot_GEN, D_gc, L_g, V_g =  m_dot_GEN_calculation(D_g, D_gc, L_g, R_dot, N, den_actual, t_interval)
-        
+        print(f"t={t:.4f} s, D_gc={D_gc:.2f} mm, L_g={L_g:.2f} mm, V_g={V_g:.2f} mm^3")
+
         D_gc_list.append(D_gc)
         L_g_list.append(L_g)
         
@@ -519,10 +543,11 @@ def simulate(
 
         m_g -= m_dot_GEN * t_interval
         m_g_list.append(m_g)
+        print(f"m_g: {m_g:.4f} kg")
 
         m_dot_NOZ = m_dot_NOZ_calculation(P_c, P_atm, A_NOZ_t, C_star)
         m_dot_REMAIN = m_dot_REMAIN_calculation(m_dot_GEN, m_dot_NOZ)
-
+        print(f"m_dot_GEN: {m_dot_GEN:.4f} kg/s, m_dot_NOZ: {m_dot_NOZ:.4f} kg/s, m_dot_REMAIN: {m_dot_REMAIN:.4f} kg/s")
         m_dot_GEN_list.append(m_dot_GEN)
         m_dot_NOZ_list.append(m_dot_NOZ)
         m_dot_REMAIN_list.append(m_dot_REMAIN)
@@ -532,15 +557,16 @@ def simulate(
 
         m_REMAIN += m_REMAIN_calculation(m_dot_REMAIN, t_interval)
         den_REMAIN = Den_REMAIN_calculation(V_c, V_g, m_REMAIN)
+        print(f"m_REMAIN: {m_REMAIN:.4f} kg, Den_REMAIN: {den_REMAIN:.4f} g/cc")
         
         den_REMAIN_list.append(den_REMAIN)
 
         P_c = P_chamber_calculation(den_REMAIN, R_specific, T_actual, P_atm)
-        
+        print(f"P_c: {P_c:.4f} MPa")
         P_c_list.append(P_c)
 
         R_dot = R_dot_calculation(a, n, P_c)
-
+        print(f"R_dot: {R_dot:.4f} mm/s")
         R_dot_list.append(R_dot)
         
         t_list.append(t)
@@ -610,6 +636,7 @@ if __name__ == "__main__":
     print("예) U(circle(x,y,5,5,3), circle(x,y,-5,5,3))")
     print("예) star(x,y,0,0, r_inner=1.5, r_outer=3.0, k=5, sharp=8)")
 
+    #연료 특성
     Den_grain = 1.841
     gamma = 1.137
     R_specific = 208.4
@@ -635,12 +662,12 @@ if __name__ == "__main__":
     L_gs = float(input("세그먼트 길이(mm): ").strip())
     N = int(input("세그먼트 개수: ").strip())
     Den_ratio = float(input("연료 밀도 비율(0~1): ").strip())
-    P_target = float(input("목표 압력(MPa): ").strip())
+    P_target = float(input("최대 압력(MPa): ").strip())
     e = float(input("노즐 삭마 정도: ").strip())
     eff_combustion = float(input("연소 효율(0~1): ").strip())
     t_interval = float(input("시간 간격(s): ").strip())
 
-    V_c, L_g, V_g, V_load, Den_actual, m_grain, A_be, A_bc, A_bg, T_actual = grain_chamber_setting(
+    V_c, L_g, V_g, V_load, Den_actual, m_g, A_be, A_bc, A_bg, T_actual = grain_chamber_setting(
         D_c, L_c, D_g, D_gc, L_gs, N, Den_grain, Den_ratio, T_ideal, eff_combustion)
     
     print("초기 조건은 다음과 같습니다.")
@@ -656,7 +683,7 @@ if __name__ == "__main__":
     print(f"세그먼트 개수: {N}")
     print(f"그레인 길이: {L_g:.2f} mm")
     print(f"그레인 밀도: {Den_actual:.4f} g/cc")
-    print(f"그레인 질량: {m_grain:.4f} kg")
+    print(f"그레인 질량: {m_g:.4f} kg")
     print(f"그레인 부피: {V_g:.2f} mm^3")
     print(f"챔버 대비 그레인 부피 비율: {V_load:.4f}")
 
@@ -676,7 +703,7 @@ if __name__ == "__main__":
 
     check = input("시작하시겠습니까? (Y/N): ").strip().lower()
     if check == 'y':
-        A_NOZ_t = simulate_NOZ_t(D_gc, D_g, L_g, t_interval, Kn_max, r_dot_test=0.5)
+        A_NOZ_t = simulate_NOZ_t(D_gc, D_g, L_g, N, t_interval, Kn_max, r_dot_test=0.49)
         print(f"계산된 노즐 단면적: {A_NOZ_t:.2f} mm^2")
         t, Dgc, Lg, Abe, Abc, Abg, mg, mdotGEN, mdotNOZ, mdotREMAIN, denREMAIN, Pc, Rdot, Kn_list, shots, Xmm, Ymm, grainsdfm = simulate(
             exprs, 
@@ -687,14 +714,16 @@ if __name__ == "__main__":
             L_g,
             V_g, 
             Den_actual,
+            m_g,
             A_NOZ_t, 
             R_specific, 
-            gamma, 
+            gamma,
+            C_star,
             T_actual,
             P_target, 
             P_atm,
             e_NOZ, 
-            a=0.5, n=0.5,
+            a=3.907, n=0.535,
             t_end = 100.0, t_interval=t_interval,
             grid=1500,
             snapshot_dt = 0.05
@@ -790,7 +819,7 @@ if __name__ == "__main__":
             t0, F0 = shots[0]
             port0 = (F0 <= 0)
             solid0 = (grainsdfm <= 0) & (~port0)
-            plt.contourf(XXmm, Ymm, solid0.astype(float),
+            plt.contourf(Xmm, Ymm, solid0.astype(float),
                          levels=[-0.5, 0.5, 1.5], alpha=0.25)
 
         for i, (ti, Fsnap) in enumerate(shots):
