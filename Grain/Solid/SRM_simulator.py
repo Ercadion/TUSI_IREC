@@ -393,6 +393,15 @@ def D_gc_transfer(A_port):
     D_gc = (4.0 * A_port / np.pi) ** 0.5
     return D_gc
 
+def Kn_max_calculation(P_target):
+    """
+    최대 Knudsen 수 계산
+    ================================
+    P_target: 목표 압력(MPa)
+    """
+    coeff = [34.5, -10.975, 69.667, -19.664, 2.1478, -8.1463 * 1e-2]
+    Kn_max = coeff[0] + coeff[1]*P_target + coeff[2]*P_target**2 + coeff[3]*P_target**3 + coeff[4]*P_target**4 + coeff[5]*P_target**5
+    return Kn_max
 
 def simulate_NOZ_t(
     D_gc, D_g,
@@ -640,7 +649,6 @@ if __name__ == "__main__":
     P_atm = 0.101
     C_star = 885
     e_NOZ = 0.0         #공식에 반영 안되어 있음
-    Kn_max = 385
 
 
 
@@ -665,6 +673,7 @@ if __name__ == "__main__":
 
     V_c, L_g, V_g, V_load, Den_actual, m_g, A_be, A_bc, A_bg, T_actual = grain_chamber_setting(
         D_c, L_c, D_g, D_gc, L_gs, N, Den_grain, Den_ratio, T_ideal, eff_combustion)
+    Kn_max = Kn_max_calculation(P_target) 
     
     print("초기 조건은 다음과 같습니다.")
     print("연료 종류: KNSB")
@@ -694,12 +703,13 @@ if __name__ == "__main__":
     print(f"비열비: {gamma:.3f}")
     print(f"특성 속도: {C_star:.2f} m/s")
     print(f"노즐 삭마 정도: {e:.2f}")
+    print(f"최대 Kn: {Kn_max:.3f}")
 
     print(f"시간 간격: {t_interval:.3f} s")
 
     check = input("시작하시겠습니까? (Y/N): ").strip().lower()
     if check == 'y':
-        A_NOZ_t = simulate_NOZ_t(D_gc, D_g, L_g, N, t_interval, Kn_max, r_dot_test=0.49)
+        A_NOZ_t = simulate_NOZ_t(D_gc, D_g, L_g, N, t_interval, Kn_max, r_dot_test=0.245)
         print(f"계산된 노즐 단면적: {A_NOZ_t:.2f} mm^2")
         t, Dgc, Lg, Abe, Abc, Abg, mg, mdotGEN, mdotNOZ, mdotREMAIN, denREMAIN, Pc, Rdot, Kn_list, shots, Xmm, Ymm, grainsdfm = simulate(
             exprs, 
@@ -781,7 +791,7 @@ if __name__ == "__main__":
         plt.figure()
         plt.plot(t, denREMAIN, label="den_REMAIN (잔류 추진제 밀도)")
         plt.xlabel("Time [s]")
-        plt.ylabel("den_REMAIN [g/cc]")
+        plt.ylabel("den_REMAIN [kg/m^3]")
         plt.grid(True)
 
         plt.figure()
